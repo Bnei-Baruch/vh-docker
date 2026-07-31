@@ -83,6 +83,18 @@ each service through its published loopback port.
 
 Staging is identical on `staging-vh.kli.one` / `staging-vh-api.kli.one`.
 
+## Testing the ingress
+
+```bash
+./nginx/test/run.sh              # production
+./nginx/test/run.sh staging
+```
+
+Runs the real config in a throwaway nginx container against stub backends that
+echo the URI they received, and asserts on prefix stripping, CORS preflight,
+retired-route 404s and unknown-Host handling. `nginx -t` only proves the config
+parses; every bug found while writing these configs parsed fine.
+
 ## Things that fail silently
 
 Collected because each one produces a *working-looking* system that is wrong.
@@ -101,9 +113,17 @@ logs then reads as the LB, and there is no way to recover the real ones later.
 lived in nginx in front of Kong. Removing Kong does not remove the need for it;
 `nginx/snippets/cors.conf` carries it over verbatim.
 
-**Trailing slashes on `proxy_pass` are load-bearing.** `proxy_pass http://x/;`
-strips the location prefix; `proxy_pass http://x;` does not. Every Kong route
-was `strip_path=true`, so the slash must stay.
+**Prefix stripping uses `rewrite`, not a trailing slash on `proxy_pass`.** The
+trailing-slash form substitutes the matched prefix with `/`, so `location ^~ /pay`
+turns `/pay/v1/orders` into `//v1/orders`. Static frontends normalise that away —
+which is why the current Scaleway config gets away with it — but Kong produced a
+clean `/v1/orders` and Go routers generally will not forgive the difference.
+
+**`include cors.conf` must come BEFORE the `rewrite` in each location.** `rewrite`
+and `if` are both ngx_http_rewrite_module and run in one ordered phase, so a
+`rewrite ... break` above the `if` ends the phase and CORS disappears entirely —
+config still parses, preflights just quietly return the upstream's 200 with no
+headers.
 
 **App roles must own their databases.** PostgreSQL 15 removed PUBLIC's `CREATE`
 on the `public` schema, so a non-owner role cannot create tables and every
