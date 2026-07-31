@@ -1,0 +1,48 @@
+# NATS with JetStream — host-managed.
+#
+# Previously this lived inside vh-srv-orders/docker-compose.yml and was brought
+# up by every orders deploy. It is infrastructure shared by the backends, not
+# part of one service, so it moves here and the per-deploy bring-up is dropped
+# from the orders workflow.
+#
+#   docker compose -f nats/nats.yml up -d
+#
+# JetStream starts from an empty volume on the new VMs. That is fine and needs no
+# migration: vh-srv-orders calls jetstream CreateOrUpdateStream on connect
+# (events/handlers.go), so the stream is re-created on first boot.
+
+name: vh-nats
+
+services:
+  nats:
+    container_name: nats
+    image: nats:2.10
+    restart: unless-stopped
+    volumes:
+      - nats_data:/storage
+    # No published ports. Everything that speaks to NATS — the backends and
+    # nats-exporter — is on the vh network and reaches it as `nats:4222`.
+    # The old compose published 4222/8222 on 0.0.0.0, which on a host with
+    # firewalld disabled would put an authenticated-but-internet-facing NATS
+    # on the public IP.
+    expose:
+      - "4222"
+      - "8222"
+    command:
+      - "--jetstream"
+      - "--store_dir"
+      - "/storage"
+      - "--user"
+      - "${NATS_USER}"
+      - "--pass"
+      - "${NATS_PASSWORD}"
+      - "--http_port"
+      - "8222"
+
+networks:
+  default:
+    name: vh
+    external: true
+
+volumes:
+  nats_data:

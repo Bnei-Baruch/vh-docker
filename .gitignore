@@ -1,0 +1,14 @@
+# Per-service deploy directories. CI/CD scp's each service's docker-compose.yml
+# in here, and the .env files next to them are hand-created on the VM.
+# Nothing under apps/ is ever tracked.
+apps/*
+!apps/.gitkeep
+
+# Secrets, in any shape.
+.env
+*.env
+!*.env.example
+**/google_application_credentials.json
+
+# Rendered-from-template configs (see monitoring/README.md).
+monitoring/config/grafana.river

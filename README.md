@@ -1,0 +1,139 @@
+# vh-docker
+
+Shared infrastructure for the Virtual Home VMs: host bootstrap, nginx ingress,
+NATS, database provisioning, cron and monitoring.
+
+Modelled on [archive-docker](https://github.com/Bnei-Baruch/archive-docker) and
+[mdb-docker](https://github.com/Bnei-Baruch/mdb-docker).
+
+> Context: this repo exists for the Scaleway → on-prem migration. Plan and task
+> breakdown live in `mdhub/vh_onprem_migration/`.
+
+## What this repo is not
+
+**It does not contain application compose files.** Each service repo owns and
+ships its own `docker-compose.yml` through its `cicd.yml`: build → ghcr, scp the
+compose file to `/root/vh-docker/apps/<service>/`, then ssh in and
+`docker compose up -d`. That model is unchanged by the migration.
+
+So `apps/` is a **deploy target, not source**. CI/CD writes into it; git ignores
+everything in it. The `.env` beside each compose file is created by hand on the
+VM and exists nowhere else.
+
+## Layout
+
+```
+host/       install_rocky_9.sh, post-install.sh   — one-time VM bootstrap
+nginx/      conf.d/ + sites/ + snippets/          — host nginx, replaces Kong
+nats/       nats.yml                              — JetStream, host-managed
+db/         provision/                            — roles, databases, grants on vh-db
+cron/       vh.cron                               — 3 production jobs (installed at cutover)
+monitoring/ Grafana Agent + exporters             — production only
+apps/       (gitignored)                          — CI/CD deploy target
+```
+
+## Bring-up
+
+```bash
+# 1. bootstrap (as root, on a fresh Rocky 9 VM)
+git clone https://github.com/Bnei-Baruch/vh-docker.git /root/vh-docker
+cd /root/vh-docker
+./host/install_rocky_9.sh production        # or: staging
+
+# 2. host secrets
+cp .env.example .env && "$EDITOR" .env
+
+# 3. registry, NATS, monitoring
+./host/post-install.sh production           # or: staging
+
+# 4. databases (from anywhere with psql reach to vh-db)
+cd db/provision
+cp provision.env.example provision.env && "$EDITOR" provision.env
+set -a; source provision.env; set +a
+./provision.sh production
+
+# 5. per service: create apps/<service>/.env by hand, then deploy from GitHub Actions
+```
+
+Cron is **not** installed by step 3 — see `cron/README.md`.
+
+## Topology
+
+```
+Internet ──TLS──> edge LB ──plain HTTP :80──> host nginx ──> 127.0.0.1:<port> containers
+```
+
+The edge LB terminates TLS. These hosts never see HTTPS, run no certbot, and
+hold no certificates. nginx runs on the host (not in a container) and reaches
+each service through its published loopback port.
+
+**Ingress map** — every path strips its prefix, matching Kong's `strip_path=true`:
+
+| Host | Path | Upstream |
+|---|---|---|
+| `kli.one` | `/` | vh-front `:8081` |
+| | `/dash` | vh-dash `:8080` |
+| | `/pay` | vh-payment `:8084` |
+| | `/admin/payments` | vh-payment-bo `:8087` |
+| | `/admin/events` | vh-events-bo `:8089` |
+| `api.kli.one` | `/pay` | vh-srv-orders `:8185` |
+| | `/profile` | vh-srv-profile `:7471` |
+| | `/events` | vh-srv-events `:7475` |
+| | `/accounting` | vh-srv-accounting `:8190` |
+
+Staging is identical on `staging-vh.kli.one` / `staging-vh-api.kli.one`.
+
+## Things that fail silently
+
+Collected because each one produces a *working-looking* system that is wrong.
+
+**`vh-srv-events` is `:7475` here, not `:8080`.** Kong addressed it by container
+name over the docker network, so its service table says `vh-srv-events:8080`.
+Host nginx must use the published host port, which is `7475`. Both numbers are
+correct in their own context; copying the wrong one gives a 502.
+
+**`set_real_ip_from` in `nginx/conf.d/10-realip.conf` is a placeholder.** A
+value that does not match the LB has no effect at all — nginx does not complain.
+Every client IP in the payment audit trail, Sentry and the Loki-shipped access
+logs then reads as the LB, and there is no way to recover the real ones later.
+
+**CORS is nginx's job, not Kong's.** The wildcard CORS block on `api.kli.one`
+lived in nginx in front of Kong. Removing Kong does not remove the need for it;
+`nginx/snippets/cors.conf` carries it over verbatim.
+
+**Trailing slashes on `proxy_pass` are load-bearing.** `proxy_pass http://x/;`
+strips the location prefix; `proxy_pass http://x;` does not. Every Kong route
+was `strip_path=true`, so the slash must stay.
+
+**App roles must own their databases.** PostgreSQL 15 removed PUBLIC's `CREATE`
+on the `public` schema, so a non-owner role cannot create tables and every
+`migrate` fails on fresh PG18. See `db/README.md`.
+
+**Cron installed early hits real customers.** Phase 2 validates against restored
+production data. See `cron/README.md`.
+
+## Open before first deploy
+
+- [ ] Real edge LB address in `nginx/conf.d/10-realip.conf`.
+- [ ] Confirm `vh-db`'s `pg_hba` accepts non-SSL — three services hardcode
+      `?sslmode=disable` in their migration DSN.
+- [ ] Decide how app `.env`s address `vh-db` (IP, or `/etc/hosts` entry).
+- [ ] Confirm the timezone in `install_rocky_9.sh` matches the current hosts.
+
+## Related service-side changes
+
+These live in the service repos' `migration` branches, not here, but this repo
+assumes they have happened:
+
+- Deploy path `/opt/vh/<svc>` → `/root/vh-docker/apps/<svc>`, in **all 3–4 sites
+  per service** — the scp `target:`, the `cd`, the gomplate `--output-map`, and
+  the config bind mount inside each frontend's own `docker-compose.yml`.
+- Staging-DB choreography removed from **all four** backends.
+- Per-deploy NATS bring-up removed from `vh-srv-orders`.
+- `vh-srv-accounting/docker-compose.yml`: `networks.default.external.name` →
+  `networks.default: {name: vh, external: true}` (the long form was removed in
+  current Compose and will fail on Rocky 9).
+- Containers publish on `0.0.0.0` today. With firewalld off on the Rocky
+  baseline, that exposes every service directly on the VM's public IP,
+  bypassing the LB and nginx. Bind them to `127.0.0.1:<port>:<port>` unless the
+  network perimeter already prevents it.

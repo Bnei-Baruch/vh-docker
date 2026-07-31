@@ -1,0 +1,61 @@
+# Monitoring — PRODUCTION ONLY, matching the current setup.
+#
+# Ported from /opt/monitoring on the Scaleway production host. Two changes from
+# the original, both noted inline.
+#
+#   docker compose --project-directory /root/vh-docker -f monitoring/docker-compose.yml up -d
+#
+# Paths are relative to the REPO ROOT, not to this file, because the
+# --project-directory above pins them there.
+
+name: vh-monitoring
+
+services:
+  grafana_agent:
+    image: grafana/agent:latest
+    restart: unless-stopped
+    command: run --server.http.listen-addr=0.0.0.0:12345 /etc/agent/config.river
+    ports:
+      # CHANGED: bound to loopback. The original published 12345 on 0.0.0.0,
+      # which on the old host was covered by the cloud firewall. The Rocky 9
+      # baseline has firewalld disabled, so an unbound port here is a public
+      # agent API.
+      - "127.0.0.1:12345:12345"
+    volumes:
+      # Rendered from grafana.river.tmpl by post-install.sh — the rendered file
+      # holds the Loki password and is gitignored.
+      - ./monitoring/config/grafana.river:/etc/agent/config.river:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/log/nginx:/nginx_data:ro
+    environment:
+      AGENT_MODE: flow
+
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:latest
+    restart: unless-stopped
+    command:
+      # Scrapes the stub_status server in nginx/conf.d/00-upstreams.conf.
+      - -nginx.scrape-uri=http://127.0.0.1:8079/nginx_status
+    network_mode: host
+
+  nats-exporter:
+    image: natsio/prometheus-nats-exporter:latest
+    container_name: nats-exporter
+    restart: unless-stopped        # CHANGED: the original had no restart policy
+    command:
+      - "-accstatz"
+      - "-connz_detailed"
+      - "-healthz_js_enabled_only"
+      - "-varz"
+      - "-subz"
+      - "-jsz=all"
+      - "http://nats:8222"
+    ports:
+      - "127.0.0.1:9116:7777"
+    networks:
+      - vh_network
+
+networks:
+  vh_network:
+    external: true
+    name: vh

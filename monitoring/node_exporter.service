@@ -1,0 +1,20 @@
+[Unit]
+Description=node_exporter Service
+Wants=basic.target
+After=basic.target network.target
+
+[Service]
+User=root
+Group=root
+PermissionsStartOnly=true
+# Ported from the Scaleway production host, where the binary lived under
+# /opt/monitoring/node_exporter/. The /opt tree is retired, so it now installs
+# to /usr/local/bin like every other host-level binary.
+ExecStart=/usr/local/bin/node_exporter --collector.mountstats --collector.textfile.directory /etc/prometheus/node_exporter/data
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=always
+RestartSec=30s
+
+[Install]
+WantedBy=multi-user.target

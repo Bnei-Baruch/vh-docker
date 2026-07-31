@@ -1,0 +1,94 @@
+// Grafana Agent (flow mode) config — TEMPLATE.
+//
+// Rendered to grafana.river by host/post-install.sh via gomplate. The rendered
+// file carries the Loki remote-write password and is gitignored; only this
+// template is tracked.
+//
+// Ported from /opt/monitoring/config/grafana.river on the Scaleway production
+// host. Behaviour is unchanged apart from the credentials being externalised.
+
+logging {
+  level  = "error"
+  format = "json"
+}
+
+discovery.docker "linux" {
+  host = "unix:///var/run/docker.sock"
+}
+
+loki.source.docker "default" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.main.output
+  labels     = { type = "docker" }
+  relabel_rules = discovery.relabel.main.rules
+  forward_to = [loki.relabel.add_static_labels.receiver]
+}
+
+discovery.relabel "main" {
+  rule {
+    source_labels =  ["__meta_docker_container_name"]
+    regex = "/(.*)"
+    target_label = "container"
+  }
+
+  rule {
+    source_labels =  ["__meta_docker_network_ip"]
+    target_label = "ip"
+  }
+
+  rule {
+    source_labels =  ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label = "compose_service"
+  }
+
+   targets = discovery.docker.linux.targets
+}
+
+local.file_match "logs" {
+    path_targets = [
+      {__path__ = "/nginx_data/access*.log", source = "nginx", type = "access"},
+      {__path__ = "/nginx_data/error*.log", source = "nginx", type = "error"},
+  ]
+}
+
+loki.source.file "nginx" {
+  targets    = local.file_match.logs.targets
+  forward_to = [loki.relabel.add_static_labels.receiver]
+}
+
+loki.relabel "add_static_labels" {
+    forward_to = [loki.process.drop_old.receiver]
+
+    rule {
+      target_label = "namespace"
+      replacement  = "virtual-home"
+    }
+
+    rule {
+      target_label = "environment"
+      replacement  = "production"
+    }
+}
+
+// Drop entries older than Loki retention window so stale backlog (e.g. an
+// unrotated containers log replayed from the start) is dropped client-side
+// instead of being rejected by Loki (HTTP 400 timestamp too old) and wedging
+// the send queue.
+loki.process "drop_old" {
+  forward_to = [loki.write.bbloki.receiver]
+
+  stage.drop {
+    older_than          = "240h"
+    drop_counter_reason = "older_than_loki_retention"
+  }
+}
+
+loki.write "bbloki" {
+  endpoint {
+    url = "https://loki.kab.sh:443/loki/api/v1/push"
+    basic_auth {
+      username = "{{ .Env.LOKI_USER }}"
+      password = "{{ .Env.LOKI_PASSWORD }}"
+    }
+  }
+}

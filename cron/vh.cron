@@ -1,0 +1,33 @@
+# VH scheduled jobs — PRODUCTION ONLY.
+#
+# Install:  install -m 0644 /root/vh-docker/cron/vh.cron /etc/cron.d/vh
+#
+# ⚠ NOT installed by post-install.sh. See cron/README.md — during Phase 2 the
+#   production VM holds a restored copy of real customer data, and these jobs
+#   would charge and email real people.
+#
+# Consolidated from the two files on the current production host
+# (/etc/cron.d/vh_srv_orders and /etc/cron.d/vh_srv_profile). certbot's renewal
+# entry is deliberately not carried over — TLS terminates at the edge LB now.
+#
+# These are wall-clock times: the host timezone must match the old production
+# host (install_rocky_9.sh sets it) or the jobs silently shift.
+#
+# Each depends on the container_name in the service's own compose file
+# (vh-srv-orders, vh-srv-profile). If a service is redeployed under a different
+# name, these fail quietly into cron mail nobody reads.
+
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+# import robocasa payments
+0 0 * * * root docker exec vh-srv-orders ./robokasa.sh
+
+# update specials
+15 0 * * * root docker exec vh-srv-orders ./activate_specials.sh
+
+# invalidate expired memberships
+30 0 * * * root docker exec vh-srv-profile ./invalidate_memberships.sh
+
+# NOTE: billing.sh exists in the vh-srv-orders image but has no scheduled
+# trigger today — confirmed. Do not add one during the migration.
