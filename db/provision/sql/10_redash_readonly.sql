@@ -10,9 +10,13 @@
 \set ON_ERROR_STOP on
 
 -- The role is cluster-wide, so create it only once; provision.sh calls this file
--- per database and the guard makes the repeats harmless.
-SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'redash_user', :'redash_pw')
+-- per database and the guard makes the repeats harmless. The password is then
+-- re-applied unconditionally, so a credential change is rolled out by re-running
+-- the script rather than by a hand-written ALTER ROLE.
+SELECT format('CREATE ROLE %I LOGIN', :'redash_user')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'redash_user')
+\gexec
+SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'redash_user', :'redash_pw')
 \gexec
 
 SELECT format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), :'redash_user')

@@ -1,8 +1,17 @@
 -- Roles and databases for one VH environment.
 --
--- Run via ../provision.sh, which supplies every :variable. Idempotent: re-running
--- creates nothing that already exists (it will NOT reset passwords — do that by
--- hand with ALTER ROLE if you need to).
+-- Run via ../provision.sh, which supplies every :variable.
+--
+-- Idempotent and CONVERGENT: re-running creates nothing that already exists, but
+-- it does re-apply each role's password every time. That second part matters —
+-- an earlier version only set the password at creation time, which meant a
+-- changed credential could not be rolled out by re-running the script and had to
+-- be fixed with a hand-written ALTER ROLE. That puts the live cluster into a
+-- state the repo cannot reproduce, which defeats the point of having this file.
+--
+-- Consequence: provision.env is authoritative for these passwords. Running with
+-- a wrong value overwrites a working credential, so keep it in step with the
+-- service .env files.
 --
 -- Each app role OWNS its database. That is deliberate and not just tidiness:
 -- PostgreSQL 15 removed PUBLIC's CREATE privilege on the `public` schema, so a
@@ -15,20 +24,28 @@
 
 -- ------------------------------------------------------------------ roles ---
 
-SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'orders_user', :'orders_pw')
+SELECT format('CREATE ROLE %I LOGIN', :'orders_user')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'orders_user')
 \gexec
+SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'orders_user', :'orders_pw')
+\gexec
 
-SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'events_user', :'events_pw')
+SELECT format('CREATE ROLE %I LOGIN', :'events_user')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'events_user')
 \gexec
-
-SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'profile_user', :'profile_pw')
-WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'profile_user')
+SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'events_user', :'events_pw')
 \gexec
 
-SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'accounting_user', :'accounting_pw')
+SELECT format('CREATE ROLE %I LOGIN', :'profile_user')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'profile_user')
+\gexec
+SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'profile_user', :'profile_pw')
+\gexec
+
+SELECT format('CREATE ROLE %I LOGIN', :'accounting_user')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'accounting_user')
+\gexec
+SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', :'accounting_user', :'accounting_pw')
 \gexec
 
 -- -------------------------------------------------------------- databases ---

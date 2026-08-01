@@ -14,8 +14,15 @@ set -a; source provision.env; set +a
 ./provision.sh staging          # or: production
 ```
 
-Idempotent. Re-running creates nothing that already exists — and deliberately
-does **not** reset passwords; use `ALTER ROLE` by hand for that.
+Idempotent **and convergent**. Re-running creates nothing that already exists,
+but it does re-apply every role's password, so a credential change is rolled out
+by editing `provision.env` and re-running — never by a hand-written `ALTER ROLE`.
+
+That distinction is the whole point of this directory: the moment the live
+cluster is patched by hand, it stops being reproducible from the repo, and the
+next person has no way to tell what is actually configured. `provision.env` is
+therefore authoritative — running it with a wrong password overwrites a working
+one.
 
 ## Names
 
