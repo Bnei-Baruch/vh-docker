@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 #
-# Second-stage host setup: registry auth, NATS, monitoring.
+# Second-stage host setup: NATS, node_exporter, monitoring.
 # Run after install_rocky_9.sh, and after /root/vh-docker/.env exists.
+#
+# On staging the only thing .env needs to carry is the NATS credentials.
 #
 # Usage:  ./post-install.sh staging|production
 #
@@ -19,7 +21,8 @@ cd "$REPO_DIR"
 
 log() { echo -e "\n\033[1;34m==> $*\033[0m"; }
 
-# Host-level secrets (GHCR token, NATS credentials, Loki password) live here.
+# Host-level secrets (NATS credentials, and on production the Loki password)
+# live here.
 # Hand-created on the VM, never in git. See .env.example.
 if [[ ! -f "$REPO_DIR/.env" ]]; then
   echo "$REPO_DIR/.env is missing — copy .env.example and fill it in." >&2
@@ -28,8 +31,14 @@ fi
 set -a; source "$REPO_DIR/.env"; set +a
 
 # ---------------------------------------------------------------- registry ---
-log "Logging in to ghcr.io"
-echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+# No `docker login` here on purpose. Every ghcr.io/bnei-baruch/vh-* package is
+# public and pulls anonymously — verified against all nine, and neither current
+# Scaleway host has a ~/.docker/config.json at all. The docker/login-action in
+# each service's cicd.yml runs on the GitHub runner and authenticates the *push*
+# with GITHUB_TOKEN; the VM only ever pulls.
+#
+# If a package is ever switched to private, `docker compose pull` starts failing
+# on the VM and a login here becomes necessary.
 
 # -------------------------------------------------------------------- ssh ----
 # The deploy key CI/CD uses (BBDEPLOYMENT_SSH_PRIVATE_KEY) must be authorized for

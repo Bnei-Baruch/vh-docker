@@ -43,7 +43,7 @@ cd /root/vh-docker
 # 2. host secrets
 cp .env.example .env && "$EDITOR" .env
 
-# 3. registry, NATS, monitoring
+# 3. NATS, node_exporter, monitoring
 ./host/post-install.sh production           # or: staging
 
 # 4. databases (from anywhere with psql reach to vh-db)
@@ -145,8 +145,9 @@ production data. See `cron/README.md`.
 - [x] ~~How app `.env`s address `vh-db`~~ — by hostname `pgsql4`, which resolves
       from the app VMs.
 - [x] ~~Timezone~~ — `Etc/UTC`, matching the current hosts.
-- [ ] `/root/vh-docker/.env` on each VM (GHCR token, NATS credentials, and on
-      production the Loki password).
+- [ ] `/root/vh-docker/.env` on each VM — NATS credentials, plus the Loki
+      password on production. **No registry credentials needed**: the
+      `ghcr.io/bnei-baruch/vh-*` packages are public and the VM only pulls.
 - [ ] Authorize the `BBDEPLOYMENT_SSH_PRIVATE_KEY` public half for `root`.
 
 ## Related service-side changes
