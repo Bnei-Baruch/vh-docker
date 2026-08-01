@@ -84,6 +84,11 @@ Staging is provisioned and verified: an app role can create, insert and drop in
 Generated staging passwords live only at `/root/staging-db-credentials.env` on
 `pgsql4` (mode 600) — they are the source for the staging service `.env` files.
 
+The Redash role is **`redash_readonly`**, and its password is **not** generated
+here: set `REDASH_PW` to whatever Redash is already configured with in its own
+`.env`. This script creates the role and its grants; it does not pick the
+credential.
+
 Production database sizes, measured on the managed instance:
 
 | Database | Size |

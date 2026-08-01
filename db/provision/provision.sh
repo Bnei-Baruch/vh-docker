@@ -42,13 +42,13 @@ if [[ "$ENVIRONMENT" == "production" ]]; then
   EVENTS_DB=prod_events_srv;      EVENTS_USER=prod_events
   PROFILE_DB=prod_profile;        PROFILE_USER=prod_profile
   ACCOUNTING_DB=prod_accounting;  ACCOUNTING_USER=prod_accounting
-  REDASH_USER=redash_ro
+  REDASH_USER=redash_readonly
 else
   ORDERS_DB=staging_grom;             ORDERS_USER=staging_vh_order
   EVENTS_DB=staging_events_srv;       EVENTS_USER=staging_events
   PROFILE_DB=staging_profile;         PROFILE_USER=staging_profile
   ACCOUNTING_DB=staging_accounting;   ACCOUNTING_USER=staging_accounting
-  REDASH_USER=redash_ro
+  REDASH_USER=redash_readonly
 fi
 
 echo "==> Creating roles and databases for $ENVIRONMENT on ${PGHOST:-local socket}:$PGPORT"
