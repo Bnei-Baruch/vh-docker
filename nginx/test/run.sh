@@ -19,24 +19,28 @@ set -euo pipefail
 ENVIRONMENT="${1:-production}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 NAME="vh-nginx-test"
+NET="vh-nginx-test-net"
 PORT=18080
+# A 10.x network so the client is inside the range 10-realip.conf trusts; the
+# default docker bridge is 172.17/16 and would be untrusted.
+TRUSTED_SUBNET="10.244.0.0/16"
 
 if [[ "$ENVIRONMENT" == "production" ]]; then WEB=kli.one; API=api.kli.one
 else WEB=staging-vh.kli.one; API=staging-vh-api.kli.one; fi
 
-cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
+cleanup() {
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  docker network rm "$NET" >/dev/null 2>&1 || true
+}
 trap cleanup EXIT
 cleanup
 
-# The placeholder LB address makes install_rocky_9.sh refuse to run; for a config
-# test it is irrelevant, so feed nginx a copy with a routable value.
-tmp="$(mktemp -d)"
-sed 's|0\.0\.0\.0/32|10.0.0.0/8|' "$REPO/nginx/conf.d/10-realip.conf" > "$tmp/10-realip.conf"
+docker network create --subnet "$TRUSTED_SUBNET" "$NET" >/dev/null
 
-docker run -d --rm --name "$NAME" -p "$PORT:80" \
+docker run -d --rm --name "$NAME" --network "$NET" -p "$PORT:80" \
   -v "$REPO/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
   -v "$REPO/nginx/conf.d/00-upstreams.conf:/etc/nginx/conf.d/00-upstreams.conf:ro" \
-  -v "$tmp/10-realip.conf:/etc/nginx/conf.d/10-realip.conf:ro" \
+  -v "$REPO/nginx/conf.d/10-realip.conf:/etc/nginx/conf.d/10-realip.conf:ro" \
   -v "$REPO/nginx/sites/$ENVIRONMENT.conf:/etc/nginx/conf.d/50-vh.conf:ro" \
   -v "$REPO/nginx/snippets:/etc/nginx/snippets:ro" \
   -v "$REPO/nginx/test/stubs.conf:/etc/nginx/conf.d/90-stubs.conf:ro" \
@@ -96,7 +100,23 @@ else
   echo "  FAIL  GET missing CORS headers"; fails=$((fails+1))
 fi
 
-rm -rf "$tmp"
+echo "real client ip"
+# From inside the trusted subnet, X-Forwarded-For must win: this is what puts the
+# customer's address — not the LB's — into the payment audit trail and Sentry.
+seen="$(docker run --rm --network "$NET" curlimages/curl:8.11.1 -s -o /dev/null -D- \
+        -H "Host: $WEB" -H 'X-Forwarded-For: 203.0.113.7' "http://$NAME/" \
+        | tr -d '\r' | awk -F': ' 'tolower($1)=="x-seen-real-ip"{print $2}')"
+if [[ "$seen" == "203.0.113.7" ]]; then echo "  ok    trusted hop: backend sees 203.0.113.7"
+else echo "  FAIL  trusted hop: backend saw '${seen:-<none>}'"; fails=$((fails+1)); fi
+
+# From outside it, the header must be ignored — otherwise anyone could choose the
+# IP that gets recorded against a payment.
+seen="$(curl -s --max-time 5 -o /dev/null -D- -H "Host: $WEB" \
+        -H 'X-Forwarded-For: 203.0.113.7' "http://127.0.0.1:$PORT/" \
+        | tr -d '\r' | awk -F': ' 'tolower($1)=="x-seen-real-ip"{print $2}')"
+if [[ -n "$seen" && "$seen" != "203.0.113.7" ]]; then echo "  ok    untrusted hop: header ignored (saw $seen)"
+else echo "  FAIL  untrusted hop: spoofed XFF was honoured ('$seen')"; fails=$((fails+1)); fi
+
 echo
 if (( fails )); then echo "$fails check(s) failed"; exit 1; fi
 echo "all checks passed ($ENVIRONMENT)"

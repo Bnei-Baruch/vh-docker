@@ -104,10 +104,13 @@ name over the docker network, so its service table says `vh-srv-events:8080`.
 Host nginx must use the published host port, which is `7475`. Both numbers are
 correct in their own context; copying the wrong one gives a 502.
 
-**`set_real_ip_from` in `nginx/conf.d/10-realip.conf` is a placeholder.** A
-value that does not match the LB has no effect at all — nginx does not complain.
-Every client IP in the payment audit trail, Sentry and the Loki-shipped access
-logs then reads as the LB, and there is no way to recover the real ones later.
+**`set_real_ip_from` needs no per-host edit, but it still fails quietly if
+wrong.** `nginx/conf.d/10-realip.conf` trusts `10.0.0.0/8` and `fd00::/8` rather
+than one LB address, so it is correct as shipped and survives the LB being
+re-addressed. If a hop ever sits *outside* those ranges, `real_ip` silently has
+no effect — nginx does not warn — and every client IP in the payment audit
+trail, Sentry and the Loki-shipped access logs becomes the proxy's, with no way
+to recover the real ones afterwards. `nginx/test/run.sh` asserts both directions.
 
 **CORS is nginx's job, not Kong's.** The wildcard CORS block on `api.kli.one`
 lived in nginx in front of Kong. Removing Kong does not remove the need for it;
@@ -134,11 +137,17 @@ production data. See `cron/README.md`.
 
 ## Open before first deploy
 
-- [ ] Real edge LB address in `nginx/conf.d/10-realip.conf`.
-- [ ] Confirm `vh-db`'s `pg_hba` accepts non-SSL — three services hardcode
-      `?sslmode=disable` in their migration DSN.
-- [ ] Decide how app `.env`s address `vh-db` (IP, or `/etc/hosts` entry).
-- [ ] Confirm the timezone in `install_rocky_9.sh` matches the current hosts.
+- [x] ~~Real edge LB address~~ — `10-realip.conf` trusts the private ranges; no
+      per-host edit.
+- [x] ~~Confirm `vh-db`'s SSL policy~~ — `ssl = off` with scram over plain TCP,
+      so the hardcoded `?sslmode=disable` works. **Nothing may use
+      `sslmode=require`**; it fails outright.
+- [x] ~~How app `.env`s address `vh-db`~~ — by hostname `pgsql4`, which resolves
+      from the app VMs.
+- [x] ~~Timezone~~ — `Etc/UTC`, matching the current hosts.
+- [ ] `/root/vh-docker/.env` on each VM (GHCR token, NATS credentials, and on
+      production the Loki password).
+- [ ] Authorize the `BBDEPLOYMENT_SSH_PRIVATE_KEY` public half for `root`.
 
 ## Related service-side changes
 

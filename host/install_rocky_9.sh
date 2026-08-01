@@ -94,13 +94,8 @@ install -m 0644 "$REPO_DIR/nginx/sites/${ENVIRONMENT}.conf" /etc/nginx/conf.d/50
 # Anything the stock package dropped in conf.d/ would still be loaded.
 rm -f /etc/nginx/conf.d/default.conf
 
-# The placeholder LB address has no effect if left in place, and nginx will not
-# warn — fail here instead of discovering it in the payment audit trail.
-if grep -q "0.0.0.0/32" /etc/nginx/conf.d/10-realip.conf; then
-  echo "ERROR: set_real_ip_from is still the placeholder in nginx/conf.d/10-realip.conf." >&2
-  echo "       Set the real edge LB address before serving traffic." >&2
-  exit 1
-fi
+# No per-host edit needed here: 10-realip.conf trusts the private ranges rather
+# than one LB address, so it is correct as shipped.
 
 nginx -t
 systemctl enable --now nginx
