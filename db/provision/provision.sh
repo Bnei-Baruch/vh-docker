@@ -22,14 +22,16 @@ fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-: "${PGHOST:?set PGHOST to the vh-db address}"
 : "${PGPORT:=5432}"
 : "${PGUSER:?set PGUSER to a superuser on vh-db}"
-: "${PGPASSWORD:?set PGPASSWORD}"
+# PGHOST/PGPASSWORD are optional: run this on vh-db itself as the postgres user
+# and libpq uses the unix socket with peer auth, no password involved. Set both
+# to run it remotely.
+export PGPORT PGUSER
+[[ -n "${PGHOST:-}" ]]     && export PGHOST
+[[ -n "${PGPASSWORD:-}" ]] && export PGPASSWORD
 
 : "${ORDERS_PW:?}" "${EVENTS_PW:?}" "${PROFILE_PW:?}" "${ACCOUNTING_PW:?}" "${REDASH_PW:?}"
-
-export PGHOST PGPORT PGUSER PGPASSWORD
 
 # Names are NOT uniform and are not ours to choose on the production side — they
 # come from the existing managed instance and must match, because the app .env
@@ -49,7 +51,7 @@ else
   REDASH_USER=redash_ro
 fi
 
-echo "==> Creating roles and databases for $ENVIRONMENT on $PGHOST:$PGPORT"
+echo "==> Creating roles and databases for $ENVIRONMENT on ${PGHOST:-local socket}:$PGPORT"
 psql -d postgres -v ON_ERROR_STOP=1 \
   -v orders_db="$ORDERS_DB"         -v orders_user="$ORDERS_USER"         -v orders_pw="$ORDERS_PW" \
   -v events_db="$EVENTS_DB"         -v events_user="$EVENTS_USER"         -v events_pw="$EVENTS_PW" \

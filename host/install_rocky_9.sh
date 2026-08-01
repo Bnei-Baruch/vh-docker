@@ -15,7 +15,7 @@ fi
 
 REPO_DIR="/root/vh-docker"
 GOMPLATE_VERSION="v4.3.0"
-TIMEZONE="Asia/Jerusalem"   # cron jobs are wall-clock; must match the old hosts
+TIMEZONE="Etc/UTC"      # both current Scaleway hosts are UTC; cron is wall-clock
 
 log() { echo -e "\n\033[1;34m==> $*\033[0m"; }
 

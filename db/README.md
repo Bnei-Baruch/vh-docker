@@ -68,3 +68,32 @@ it replaces objects the grants were attached to.
 
 **Time every dump and restore.** The cutover window is a full dump + restore
 (decided — no incremental path), so these numbers *are* the window length.
+
+## vh-db as provisioned (2026-08-01)
+
+`pgsql4` / `pgsql-vh` — **PostgreSQL 18.4**, `10.103.105.34:5432`, `listen_addresses = '*'`.
+It also resolves as `pgsql4` from the app VMs, so `.env` files can use the name.
+
+**`ssl = off`, and `pg_hba` is `host all all 0.0.0.0/0 scram-sha-256`.** So the
+hardcoded `?sslmode=disable` in the three Go migration DSNs works as-is — and
+the converse is now a rule: **nothing may use `sslmode=require`**, it fails with
+"server does not support SSL". Verified from the staging VM in both directions.
+
+Staging is provisioned and verified: an app role can create, insert and drop in
+`public`, which confirms the PG15 privilege change is handled by ownership.
+Generated staging passwords live only at `/root/staging-db-credentials.env` on
+`pgsql4` (mode 600) — they are the source for the staging service `.env` files.
+
+Production database sizes, measured on the managed instance:
+
+| Database | Size |
+|---|---|
+| `prod_grom` | 270 MB |
+| `prod_profile` | 68 MB |
+| `prod_events_srv` | 16 MB |
+| `prod_accounting` | 8 MB |
+| **total** | **~362 MB** |
+
+At that size a full dump + restore is a matter of minutes, which settles the
+cutover-window question: the decided full-dump approach is comfortably fine and
+there was never a case for an incremental path.
