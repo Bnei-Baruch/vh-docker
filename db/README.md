@@ -42,6 +42,29 @@ current staging databases have unrelated ad-hoc names (`dev_gorm`,
 `event_database`, user `app_user`…) because they were throwaway on-box
 containers; none of that carries over.
 
+## Isolation model
+
+`prod_*` and `staging_*` live on the same cluster, so the boundary between them
+is enforced by grants, not by separate servers:
+
+- **Each app role owns exactly one database and can connect to only that one.**
+- **`redash_readonly` is the single exception** — it gets `CONNECT` plus
+  read-only grants on every database, in both environments.
+- Roles are **cluster-wide** in PostgreSQL, which is why the `prod_`/`staging_`
+  prefixes exist. Never drop them; two environments cannot both have a role
+  called `vh_order`.
+
+The revoke that makes this true is in `00_roles_and_databases.sql`. PostgreSQL
+grants `CONNECT` and `TEMPORARY` to `PUBLIC` on every new database, so **without
+it any role can connect to any database** — including a staging service account
+reaching `prod_grom`, reading its whole schema from `information_schema`,
+enumerating every role, and creating temp tables in it. Table data stays
+unreadable, but that is not the boundary we want.
+
+Left deliberately open: the `postgres` maintenance database, so the shared
+catalogs stay listable. The *names* of the other environment's databases and
+roles are therefore visible — no schema, no data.
+
 ## Two things that will bite
 
 **PG15 removed PUBLIC's `CREATE` on the `public` schema.** A non-owner app role

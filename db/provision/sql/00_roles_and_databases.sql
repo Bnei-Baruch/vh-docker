@@ -66,6 +66,38 @@ SELECT format('CREATE DATABASE %I OWNER %I', :'accounting_db', :'accounting_user
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'accounting_db')
 \gexec
 
+-- --------------------------------------------------------------- isolation ---
+-- Each role may reach ONLY its own database. redash_readonly is the single
+-- exception and is granted CONNECT per database by 10_redash_readonly.sql.
+--
+-- This matters because prod_* and staging_* share one cluster. PostgreSQL grants
+-- CONNECT and TEMPORARY to PUBLIC on every new database, so without the revoke
+-- below any role — including a staging service account — can connect to any
+-- other database, read its full schema out of information_schema, enumerate
+-- every role, and create temp tables in it. Application rows stay unreadable
+-- (no table grants), but the schema and metadata do not, and a staging
+-- credential should never be a way into production at all.
+--
+-- The owner keeps its own access: ownership carries CONNECT and TEMPORARY
+-- independently of PUBLIC, and the explicit GRANT below states it rather than
+-- relying on that.
+--
+-- Not covered: the `postgres` maintenance database is left alone, so the shared
+-- catalogs (pg_database, pg_roles) remain listable by any role. That exposes the
+-- existence and names of the other environment's databases and roles, but no
+-- schema and no data. Locking it down risks the provided infra's own tooling.
+
+SELECT format('REVOKE CONNECT, TEMPORARY ON DATABASE %I FROM PUBLIC', d)
+FROM unnest(ARRAY[:'orders_db', :'events_db', :'profile_db', :'accounting_db']) AS d
+\gexec
+
+SELECT format('GRANT CONNECT, TEMPORARY ON DATABASE %I TO %I', d.db, d.owner)
+FROM (VALUES (:'orders_db', :'orders_user'),
+             (:'events_db', :'events_user'),
+             (:'profile_db', :'profile_user'),
+             (:'accounting_db', :'accounting_user')) AS d(db, owner)
+\gexec
+
 -- ------------------------------------------------------------- extensions ---
 -- Only plpgsql is in use (confirmed on the managed PG for orders and events),
 -- and it is installed by default in every new database. Nothing to do here —
