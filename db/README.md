@@ -102,7 +102,29 @@ it replaces objects the grants were attached to.
 ## vh-db as provisioned (2026-08-01)
 
 `pgsql4` / `pgsql-vh` — **PostgreSQL 18.4**, `10.103.105.34:5432`, `listen_addresses = '*'`.
-It also resolves as `pgsql4` from the app VMs, so `.env` files can use the name.
+
+**Always address it as the FQDN `pgsql4.bb.local` in service `.env` files — never
+the bare `pgsql4`.** The short name works from a shell on the VM, because the
+host resolver applies `search bb.local`. It does **not** work reliably inside a
+container: Docker writes `options ndots:0` into the container's `/etc/resolv.conf`,
+which makes a name with no dots count as already fully qualified, so the search
+suffix is never appended.
+
+Whether that bites depends on the runtime, which makes it a nasty one to debug:
+
+| Runtime | Bare `pgsql4` | Why |
+|---|---|---|
+| Go services | works | Go's own resolver retries with the search suffix after NXDOMAIN |
+| Node (`vh-srv-accounting`) | **`ENOTFOUND`** | musl's `getaddrinfo` honours `ndots:0` and never tries the suffix |
+
+Both run on Alpine, so the base image is not the difference — the resolver is.
+The FQDN is correct everywhere and depends on no fallback behaviour.
+
+Verify from a container, not from the host — the two resolve differently:
+
+```bash
+docker run --rm --network vh alpine:3.20 getent hosts pgsql4.bb.local
+```
 
 **`ssl = off`, and `pg_hba` is `host all all 0.0.0.0/0 scram-sha-256`.** So the
 hardcoded `?sslmode=disable` in the three Go migration DSNs works as-is — and

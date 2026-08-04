@@ -132,6 +132,13 @@ headers.
 on the `public` schema, so a non-owner role cannot create tables and every
 `migrate` fails on fresh PG18. See `db/README.md`.
 
+**Address `vh-db` by FQDN, and test DNS from a container.** Docker sets
+`options ndots:0`, so the bare `pgsql4` never picks up the `search bb.local`
+suffix. Go's resolver papers over this by retrying; musl's `getaddrinfo` does
+not, so a Node service gets `ENOTFOUND` while the Go services beside it connect
+fine. Checking from a host shell proves nothing — the host resolver behaves
+differently. See `db/README.md`.
+
 **Cron installed early hits real customers.** Phase 2 validates against restored
 production data. See `cron/README.md`.
 
@@ -142,8 +149,9 @@ production data. See `cron/README.md`.
 - [x] ~~Confirm `vh-db`'s SSL policy~~ — `ssl = off` with scram over plain TCP,
       so the hardcoded `?sslmode=disable` works. **Nothing may use
       `sslmode=require`**; it fails outright.
-- [x] ~~How app `.env`s address `vh-db`~~ — by hostname `pgsql4`, which resolves
-      from the app VMs.
+- [x] ~~How app `.env`s address `vh-db`~~ — by the **FQDN `pgsql4.bb.local`**.
+      The bare `pgsql4` works from a host shell but not inside every container;
+      see `db/README.md`.
 - [x] ~~Timezone~~ — `Etc/UTC`, matching the current hosts.
 - [ ] `/root/vh-docker/.env` on each VM — NATS credentials, plus the Loki
       password on production. **No registry credentials needed**: the
