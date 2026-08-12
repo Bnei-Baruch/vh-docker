@@ -83,18 +83,40 @@ the policy in Phase 0.
 
 ## Restore (Phase 2 rehearsal, Phase 3 cutover)
 
+The full step-by-step sequence lives in `mdhub/vh_onprem_migration/task-breakdown.md`
+("Data migration playbook"). The essentials:
+
 Dump with the **PG18** client against the managed PG12 instance
 (`195.154.69.180:64612`), not the PG12 client:
 
 ```bash
-pg_dump -h 195.154.69.180 -p 64612 -U <user> -Fc -f prod_grom.dump prod_grom
-pg_restore -h vh-db -U postgres -d prod_grom --no-owner --no-privileges prod_grom.dump
+pg_dump    -h 195.154.69.180 -p 64612 -U prod_vh_order -d prod_grom -Fc -f prod_grom.dump
+pg_restore -h pgsql4.bb.local          -U prod_vh_order -d prod_grom \
+           --no-owner --no-privileges -j4 prod_grom.dump
 ```
 
-`--no-owner --no-privileges` because the source ownership and grants refer to
-managed-instance roles that do not exist here; ownership comes from the
-provisioning above instead. Re-run `10_redash_readonly.sql` after a restore —
-it replaces objects the grants were attached to.
+**Restore as the role that owns the database, not as `postgres`.** With
+`--no-owner`, restored objects belong to whoever runs the restore. Running it as
+a superuser therefore leaves the app role *not* owning its own tables, which
+breaks the PG15 `public`-schema arrangement this whole design depends on (see
+above) and attaches the Redash default privileges to the wrong role. The
+credentials are the same ones already in each service's `.env`, because
+`provision.sh` deliberately reuses them.
+
+`--no-privileges` because the source grants refer to managed-instance roles that
+do not exist here.
+
+**Re-run the provisioning after every restore** — restored tables carry no
+grants, and `ALTER DEFAULT PRIVILEGES` only covers objects created after it was
+set:
+
+```bash
+cd /root/vh-docker/db/provision && ./provision.sh production
+```
+
+Verify with **exact per-table counts** on both sides, not
+`pg_stat_user_tables.n_live_tup` — that is an estimate. Sequences need no manual
+step: a full dump/restore carries their values.
 
 **Time every dump and restore.** The cutover window is a full dump + restore
 (decided — no incremental path), so these numbers *are* the window length.
