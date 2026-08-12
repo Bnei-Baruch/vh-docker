@@ -7,12 +7,27 @@ need on top.
 
 ## Provisioning
 
+Run it **as root on `pgsql4`**, from a checkout of this repo:
+
 ```bash
-cd db/provision
-cp provision.env.example provision.env   # fill in
-set -a; source provision.env; set +a
-./provision.sh staging          # or: production
+cd /root/vh-docker/db/provision
+cp provision.env.example provision.env && chmod 600 provision.env
+$EDITOR provision.env
+./provision.sh production        # or: staging
 ```
+
+The script reads `provision.env` itself. **Do not `source` it** — an earlier
+version of these instructions said to, and that is wrong for any realistic
+password: sourcing executes the file as shell, so a `$`, backtick, quote, space
+or `#` is interpreted, and a value silently truncates or a command substitution
+runs. The script splits each line on the first `=` and assigns through a
+variable, so values are taken verbatim. Anything already exported wins, so a
+one-off override still works.
+
+Run it as **root**, not as `postgres`: `provision.env` is `0600` root-owned, and
+the script invokes `psql` through `sudo -u postgres` when no `PGHOST` is set —
+unix socket, peer auth, no password anywhere. Set `PGHOST`/`PGUSER`/`PGPASSWORD`
+to run it against a remote instance instead.
 
 Idempotent **and convergent**. Re-running creates nothing that already exists,
 but it does re-apply every role's password, so a credential change is rolled out

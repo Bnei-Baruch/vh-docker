@@ -9,8 +9,12 @@
 # roles and grants the applications need — it never installs, configures or
 # backs up postgres.
 #
-# Passwords come from the environment (see db/provision/provision.env.example)
-# and are never stored in git.
+# Passwords are read from provision.env beside this script (gitignored), or from
+# the environment. They are never stored in git.
+#
+# Run it on vh-db as root:
+#
+#   cd /root/vh-docker/db/provision && ./provision.sh production
 #
 set -euo pipefail
 
@@ -22,16 +26,51 @@ fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ------------------------------------------------------------ provision.env ---
+# Read as data, NOT sourced. `set -a; . provision.env` runs the file as shell, so
+# any $, backtick, quote, space or # in a password is interpreted or truncates
+# the value — which real passwords routinely contain. Splitting on the first "="
+# and assigning through a variable keeps the value verbatim.
+#
+# Anything already exported wins, so a one-off override still works.
+ENVFILE="${PROVISION_ENV:-$HERE/provision.env}"
+if [[ -f "$ENVFILE" ]]; then
+  echo "==> Reading $ENVFILE"
+  while IFS='=' read -r key val || [[ -n "$key" ]]; do
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue   # skips comments and blanks
+    val="${val%$'\r'}"                                     # tolerate CRLF
+    [[ -n "${!key:-}" ]] && continue                       # environment wins
+    export "$key=$val"
+  done < "$ENVFILE"
+fi
+
 : "${PGPORT:=5432}"
-: "${PGUSER:?set PGUSER to a superuser on vh-db}"
-# PGHOST/PGPASSWORD are optional: run this on vh-db itself as the postgres user
-# and libpq uses the unix socket with peer auth, no password involved. Set both
-# to run it remotely.
-export PGPORT PGUSER
+# PGHOST/PGPASSWORD/PGUSER are all optional. With none of them set this runs psql
+# through `sudo -u postgres`, i.e. the unix socket with peer auth and no password
+# anywhere — which is why the script wants to be run as root on vh-db rather than
+# as the postgres user (postgres cannot read a 0600 root-owned provision.env).
+export PGPORT
 [[ -n "${PGHOST:-}" ]]     && export PGHOST
+[[ -n "${PGUSER:-}" ]]     && export PGUSER
 [[ -n "${PGPASSWORD:-}" ]] && export PGPASSWORD
 
-: "${ORDERS_PW:?}" "${EVENTS_PW:?}" "${PROFILE_PW:?}" "${ACCOUNTING_PW:?}" "${REDASH_PW:?}"
+psql_run () {
+  if [[ -z "${PGHOST:-}" ]]; then
+    sudo -u postgres psql "$@"
+  else
+    psql "$@"
+  fi
+}
+
+missing=()
+for v in ORDERS_PW EVENTS_PW PROFILE_PW ACCOUNTING_PW REDASH_PW; do
+  [[ -n "${!v:-}" ]] || missing+=("$v")
+done
+if (( ${#missing[@]} )); then
+  echo "ERROR: missing password(s): ${missing[*]}" >&2
+  echo "       set them in $ENVFILE (copy provision.env.example) or in the environment." >&2
+  exit 1
+fi
 
 # Names are NOT uniform and are not ours to choose on the production side — they
 # come from the existing managed instance and must match, because the app .env
@@ -52,7 +91,7 @@ else
 fi
 
 echo "==> Creating roles and databases for $ENVIRONMENT on ${PGHOST:-local socket}:$PGPORT"
-psql -d postgres -v ON_ERROR_STOP=1 \
+psql_run -d postgres -v ON_ERROR_STOP=1 \
   -v orders_db="$ORDERS_DB"         -v orders_user="$ORDERS_USER"         -v orders_pw="$ORDERS_PW" \
   -v events_db="$EVENTS_DB"         -v events_user="$EVENTS_USER"         -v events_pw="$EVENTS_PW" \
   -v profile_db="$PROFILE_DB"       -v profile_user="$PROFILE_USER"       -v profile_pw="$PROFILE_PW" \
@@ -65,7 +104,7 @@ for pair in "$ORDERS_DB:$ORDERS_USER" "$EVENTS_DB:$EVENTS_USER" \
             "$PROFILE_DB:$PROFILE_USER" "$ACCOUNTING_DB:$ACCOUNTING_USER"; do
   db="${pair%%:*}"; owner="${pair##*:}"
   echo "==> Redash read-only grants on $db"
-  psql -d "$db" -v ON_ERROR_STOP=1 \
+  psql_run -d "$db" -v ON_ERROR_STOP=1 \
     -v redash_user="$REDASH_USER" -v redash_pw="$REDASH_PW" -v owner="$owner" \
     -f "$HERE/sql/10_redash_readonly.sql"
 done
