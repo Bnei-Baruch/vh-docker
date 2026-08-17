@@ -20,8 +20,12 @@
 # cannot do it and deliberately does not try:
 #
 #   ssh production-vh-new
-#   for s in vh-srv-orders vh-srv-profile vh-srv-events vh-srv-accounting; do
-#     (cd /root/vh-docker/apps/$s && docker compose stop); done
+#   docker stop vh-srv-orders vh-srv-profile vh-srv-events vh-srv-accounting
+#
+# Plain docker, not `docker compose stop`: compose interpolates ${IMAGE_NAME}
+# whenever it parses the file — for every subcommand, not just `up` — and that
+# variable is only set during a deploy. All four backends set container_name, so
+# addressing them by name works.
 #
 set -euo pipefail
 
@@ -181,8 +185,8 @@ fi
 if [[ "$ACTION" == restore || "$ACTION" == all ]]; then
   echo
   echo "==> Restart the services on the app VM; boot migrations apply any delta:"
-  echo "      for s in vh-srv-orders vh-srv-profile vh-srv-events vh-srv-accounting; do"
-  echo "        (cd /root/vh-docker/apps/\$s && docker compose start); done"
+  echo "      docker start vh-srv-orders vh-srv-profile vh-srv-events vh-srv-accounting"
+  echo "    (plain docker: compose would want IMAGE_NAME, which is only set during a deploy)"
 fi
 
 exit $RC
