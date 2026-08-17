@@ -19,15 +19,20 @@ $EDITOR provision.env
 The script reads `provision.env` itself. **Do not `source` it** — an earlier
 version of these instructions said to, and that is wrong for any realistic
 password: sourcing executes the file as shell, so a `$`, backtick, quote, space
-or `#` is interpreted, and a value silently truncates or a command substitution
-runs. The script splits each line on the first `=` and assigns through a
-variable, so values are taken verbatim. Anything already exported wins, so a
-one-off override still works.
+or `#` is interpreted, a value silently truncates, or a command substitution
+runs. Values are taken verbatim, so passwords need no quoting or escaping.
 
-Run it as **root**, not as `postgres`: `provision.env` is `0600` root-owned, and
-the script invokes `psql` through `sudo -u postgres` when no `PGHOST` is set —
-unix socket, peer auth, no password anywhere. Set `PGHOST`/`PGUSER`/`PGPASSWORD`
-to run it against a remote instance instead.
+Run it as **root**, on the vh-db host. There is deliberately **no remote mode**:
+`psql` always goes through `sudo -u postgres` on the unix socket — peer auth,
+superuser, no password and no network. That matters because the host exports
+`PGHOST`/`PGUSER` system-wide, and a remote mode let those quietly take over the
+connection and run as a non-superuser, which gets far enough to create the roles
+and then fails on `CREATE DATABASE ... OWNER`. `sudo` resets the environment, so
+they cannot.
+
+Root, not `postgres`: `provision.env` is `0600` root-owned, and the SQL lives
+under `/root` (`0700`). The script feeds the SQL to psql on **stdin** rather than
+with `-f` for the same reason — `postgres` cannot open those files itself.
 
 Idempotent **and convergent**. Re-running creates nothing that already exists,
 but it does re-apply every role's password, so a credential change is rolled out
