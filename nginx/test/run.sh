@@ -100,6 +100,18 @@ else
   echo "  FAIL  GET missing CORS headers"; fails=$((fails+1))
 fi
 
+echo "redirect keeps prefix (Gin trailing-slash bug, post-Kong regression)"
+loc="$(curl -s --max-time 5 -o /dev/null -D- -H "Host: $API" "http://127.0.0.1:$PORT/pay/v2/transaction" \
+       | tr -d '\r' | awk -F': ' 'tolower($1)=="location"{print $2}')"
+if [[ "$loc" == "/pay/v2/transaction/" ]]; then echo "  ok    redirect Location keeps /pay prefix ($loc)"
+else echo "  FAIL  redirect lost /pay prefix (got '${loc:-<none>}')"; fails=$((fails+1)); fi
+if curl -s --max-time 5 -o /dev/null -D- -H "Host: $API" "http://127.0.0.1:$PORT$loc" \
+   | grep -qi 'access-control-allow-origin: \*'; then
+  echo "  ok    redirect target still carries CORS headers"
+else
+  echo "  FAIL  redirect target missing CORS headers"; fails=$((fails+1))
+fi
+
 echo "real client ip"
 # From inside the trusted subnet, X-Forwarded-For must win: this is what puts the
 # customer's address — not the LB's — into the payment audit trail and Sentry.
